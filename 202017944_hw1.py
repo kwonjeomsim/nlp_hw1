@@ -21,31 +21,50 @@ def add_subword_symbol(word):
 
 
 '''
-새로운 음절을 vocabulary 리스트에 추가한다.
+단어 하나를 받아 그 단어를 토큰 단위로 쪼갠다.
 
-이 때, 음절이 공백으로 구분된 것이 아닌 모음을 만나 음절로 분리된 것일 경우(syllable_flag가 True일 경우),
+symbol_flag 인자는 활성화되었을 때 inference time에 쓰이는 것으로 간주되어 조건 만족 시 '##' 심볼을 추가한다.
 
-문자열 앞에 '##' 심볼을 추가하여 표기한다.
-
-vocabulary 리스트에 음절을 추가한 뒤에 syllable_flag 값을 반환한다.
+최종적으로 쪼개진 토큰들을 튜플에 담아 반환한다.
 '''
-def add_new_syllable(syllable, syllable_flag):
-    if not syllable in vocabulary and syllable != '':
-        if syllable_flag == True:                               # 자른 문자열이 공백으로 분리되지 않은 subword일 경우,
-            syllable = add_subword_symbol(syllable)             # 문자열 앞에 '##' 심볼을 추가한다.
+def slash_word_to_token(word, symbol_flag):
+    result_bench = []                                               # 결과물을 저장할 리스트
+    break_flag = False                                              # 루프 탈출용 플래그
 
+    for i in range(0, len(word)):
+        for j in range(i + 1, len(word) + 1):
+            if word[i:j] in vocabulary:                             # 단어의 일부가 토큰과 일치할 때, 다음을 수행한다.
+
+                if symbol_flag == True and i != 0:                  # 한 단어가 공백이 아닌 토큰으로 나누어지면, '##' 심볼을 추가한다.
+                    result_bench.append('##' + word[i:j])           # 단, 이는 inference time에만 해당한다.
+                else:
+                    result_bench.append(word[i:j])
+
+                i = j                                               # 추가한 토큰의 다음 부분부터 확인할 수 있도록 점프한다.
+                break_flag = True
+                break
+
+        if break_flag == False:
+            result_bench.append('<unk>')                            # 한 문자에 대해 대응하는 토큰을 찾지 못하면 <unk>를 결과에 추가
+
+    return tuple(result_bench)
+
+
+'''
+새로운 음절을 vocabulary 리스트에 추가한다.
+'''
+def add_new_syllable(syllable):
+    if not syllable in vocabulary and syllable != '':
         vocabulary.append(syllable)                             # 음절을 vocabulary 리스트에 추가
         print(f"add vocab: ", syllable)
-
-    return syllable_flag
 
 
 '''
 공백으로 나눈 단어들을 음절 단위로 분리해 vocabulary 리스트에 저장한다.
 
-인자 element를 각 단어별로 loop문을 돌려 모음 철자가 등장할 때마다 syllable_index부터 i까지의 부분 문자열을 리스트에 저장한다.
+인자 word를 각 단어별로 loop문을 돌려 모음 철자가 등장할 때마다 syllable_index부터 i까지의 부분 문자열을 찾아,
 
-이 때, 음절이 한 단어 안에서 공백이 아님에도 분리된 것이라면 앞에 '##' 심볼을 추가해 subword임을 표현한다.
+해당 음절을 토큰으로 삼아 vocabulary에 저장한다.
 
 루프를 빠져나온 후 추가되지 않은 마지막 문자열의 부분을 vocabulary 리스트에 추가하고 함수가 종료된다.
 '''
@@ -53,19 +72,17 @@ def find_syllables(word):
     vowels = ['a', 'e', 'i', 'o', 'u', 'A', 'E', 'I', 'O', 'U']     #'모음'의 "모음"
 
     slice_index = 0         # 해당 인덱스부터 i까지의 subword를 저장
-    syllable_flag = False   # element의 중간에 음절이 구분되었는지 표시하는 플래그
     syllable = ''
 
     for i in range(0, len(word)):
+        if len(vocabulary) >= MAX_VOCAB:    return;
         if word[i] in vowels:
-            syllable = word[slice_index:i + 1].replace('\n', '')
-            syllable_flag = add_new_syllable(syllable, syllable_flag)
-
-            syllable_flag = True
+            syllable = word[slice_index:i + 1].replace('\n', '')                # 줄바꿈 문자가 있을 경우 제거한다.
+            add_new_syllable(syllable)                                          # 음절을 토큰으로 추가
             slice_index = i + 1
 
     syllable = word[slice_index:len(word)].replace('\n', '')
-    add_new_syllable(syllable, syllable_flag)
+    add_new_syllable(syllable)
 
 
 '''
@@ -90,40 +107,31 @@ def set_base_vocab():
         for word in split_line:                                         # 학습 텍스트 파일의 한 줄을 공백으로 나눈 단어를 하나씩
             find_syllables(word)                                        # find_syllables()에 인자로 넣어 실행한다.
 
-    with open(args.vocab, "wb") as f:                                   # base vocabulary 생성이 끝나면 해당 리스트를 vocab 명령행 인자에서 받은 파일에
-        pickle.dump(vocabulary, f)                                      # 저장한다.
-
     train_fp.close()
-
-def slash_word_to_token(word):
-    token_bench = []
-    result_bench = []
-
-    for token in vocabulary:
-        if token in word:
-            token_bench.append(token)
-
-    for i in range(0, len(word) - 1):
-        for j in range(i + 1, len(word)):
-            if word[i:j] in token_bench:
-                result_bench.append(word[i:j])
-
-        result_bench.append('<unk>')
-
-    return result_bench
 
 def get_most_frequent_combination(word_bench):
     candidates_bench = {}
     for w_o_r_d in word_bench:
         for i in range(0, len(w_o_r_d) - 1):
             new_token = w_o_r_d[i] + w_o_r_d[i + 1]
+            if new_token in vocabulary:
+                continue
+
             if new_token in candidates_bench:
-                candidates_bench[new_token] = candidates_bench[new_token] + 1
+                candidates_bench[new_token] = candidates_bench[new_token] + word_bench[w_o_r_d]
             else:
-                candidates_bench[new_token] = 1
+                candidates_bench[new_token] = word_bench[w_o_r_d]
 
     return max(candidates_bench, key=candidates_bench.get)
 
+
+'''
+base vocabulary를 완성한 후 토큰들을 합쳐 새로운 토큰을 생성한다.
+
+MAX_VOCAB에 설정된 수만큼 vocabulary 리스트 개수가 만들어질 때까지 루프를 돌며,
+
+단어마
+'''
 def add_new_token():
     while len(vocabulary) < MAX_VOCAB:
         shatterd_word_bench = {}
@@ -135,89 +143,26 @@ def add_new_token():
             split_line = line.split(' ')
 
             for word in split_line:
-                shatterd_word_list = slash_word_to_token(word)
-                shatterd_word_bench.append(shatterd_word_list)
+                shatterd_word_tuple = slash_word_to_token(word, False)
 
-                if shatterd_word_list in shatterd_word_bench:
-                    shatterd_word_bench[shatterd_word_list] = shatterd_word_bench[shatterd_word_list] + 1
+                if shatterd_word_tuple in shatterd_word_bench:
+                    shatterd_word_bench[shatterd_word_tuple] = shatterd_word_bench[shatterd_word_tuple] + 1
                 else:
-                    shatterd_word_bench[shatterd_word_list] = 1
+                    shatterd_word_bench[shatterd_word_tuple] = 1
 
-        winner = get_most_frequent_combination(shetterd_word_bench)
+        winner = get_most_frequent_combination(shatterd_word_bench)
         print(f"newly added token: ", winner)
         vocabulary.append(winner)
 
         train_fp.close()
 
-
 '''
-input 텍스트 파일의 한 단어와 두 토큰을 인자로 전달받아 토큰의 조합이 단어 안에 포함되는지 확인한다.
-
-만약 포함된다면, 토큰의 위치에 따라 적절한 처리를 한 뒤 이 새로운 토큰이 기존의 vocabulary 목록에 없었다면 토큰을 반환한다.
-
-그 외의 모든 경우, <unk>를 반환한다.
+토큰화된 input 텍스트를 output 텍스트 파일에 저장한다.
 '''
-def find_vocab_in_word(word, vocab_1, vocab_2):
-    new_vocab = vocab_1 + vocab_2                           # 토큰의 조합
-    if new_vocab in word:
-        if word.index(new_vocab) != 0:
-            new_vocab = add_subword_symbol(new_vocab)
-
-        if new_vocab not in vocabulary:                     # 해당 토큰이 기존 목록에 없을 경우, 이를 반환
-            return new_vocab
-
-    new_vocab = vocab_2 + vocab_1                           # 토큰의 조합(반대로)
-    if new_vocab in word:
-        if word.index(new_vocab) != 0:
-            new_vocab = add_subword_symbol(new_vocab)
-
-        if new_vocab not in vocabulary:                     # 해당 토큰이 기존 목록에 없을 경우, 이를 반환
-            return new_vocab
-
-    return '<unk>'
-
-
-'''
-vocabulary 리스트에서 두 개의 중복되지 않는 토큰을 뽑아 단어 안에 해당 조합이 나타나는지 확인한다.
-
-토큰의 앞에 '##'심볼이 붙어있을 경우 이를 제거하고 find_vocab_in_word()에 인자로 넘겨 포함 여부를 확인한다.
-
-그 결과를 반환하고, 만약 맞는 조합이 없다면 <unk>를 반환한다.
-'''
-def get_vocab_combinations(word):
-    result = '<unk>'
-    bench = []
-
-    for element in vocabulary:
-        if element in word:
-            bench.append(element)
-
-
-    for i in range(0, len(vocabulary) - 1):
-        for j in range(i + 1, len(vocabulary)):
-            vocab_1 = vocabulary[i]
-            vocab_2 = vocabulary[j]
-            if '##' in vocab_1:     vocab_1.replace('##', '')           # '##'심볼 제거
-            if '##' in vocab_2:     vocab_2.replace('##', '')           # '##'심볼 제거
-
-            result = find_vocab_in_word(word, vocab_1, vocab_2)
-
-    return result
-
-def split_word_base_vocab(word):
-    return get_vocab_combinations(word)
-
-'''
-vocabulary 리스트의 토큰들을 output 텍스트 파일에 저장한다.
-'''
-def write_to_output():
-    output_fp = open(args.output, "w")      # Output txt file pointer
-
-    for element in vocabulary:
-        output_fp.write(element)
-        output_fp.write('\n')
-
-    output_fp.close()
+def write_to_output(fp, tokens):
+    for token in tokens:를
+        fp.write(token)
+        fp.write(' ')
 
 
 '''
@@ -241,35 +186,24 @@ def do_bpe():
     for element in vocab:
         vocabulary.append(element)
 
-    for i in range(0, NEW_VOCAB_ITERATION):     # NEW_VOCAB_ITERATION만큼의 새로운 조합된 토큰을 생성한다.
-        input_fp = open(args.input, "r")        # Input txt file pointer
-        candidates_bench = {}                                                           # 새로 만들어진 토큰들을 저장할 dictionary
-        while True:
-            line = input_fp.readline()
-            if not line: break;
-            split_line = line.split(' ')
+    input_fp = open(args.input, "r")        # Input txt file pointer
+    output_fp = open(args.output, "w")
+    while True:
+        line = input_fp.readline()
+        if not line: break;
+        split_line = line.split(' ')
 
-            for word in split_line:
-                split_li = split_word_base_vocab(word)
+        for word in split_line:
+            tokenized_word = slash_word_to_token(word, True)
+            write_to_output(output_fp, tokenized_word)
 
-                if new_vocab in candidates_bench:                                       # 새로운 토큰이 이미 candidates_bench에 존재할 경우,
-                    candidates_bench[new_vocab] = candidates_bench[new_vocab] + 1       # 기존 토큰의 등장 횟수를 1 더한다.
-                elif new_vocab == '<unk>':  continue                                    # <unk>일 경우 무시한다.
-                else:
-                    candidates_bench[new_vocab] = 1                                     # 새로운 토큰이 존재하지 않는다면, 추가한다.
-            print(candidates_bench)
-
-        final_candidate = max(candidates_bench, key=candidates_bench.get)               # 등장 횟수가 가장 많은 토큰을 뽑아서,
-        print(f'final_candidates: ', final_candidate)
-        vocabulary.append(final_candidate)                                              # 이를 vocabulary 리스트에 저장한다.
-
-    write_to_output()                                                                   # Tokenization 수행 후, 새로운 토큰 리스트를
-                                                                                        # output 텍스트 파일에 저장한다.
+        output_fp.write('\n')
 
     with open(args.infer, "wb") as f:                                                   # 새로운 토큰이 추가된 vocabulary 리스트를
         pickle.dump(vocabulary, f)                                                      # infer 텍스트 파일에 저장한다.
 
     input_fp.close()
+    output_fp.close()
 
 
 def main(argv, args):
@@ -280,12 +214,13 @@ def main(argv, args):
         add_new_token()
         print("finish add_new_token()")
 
-    '''
+        with open(args.vocab, "wb") as f:
+            pickle.dump(vocabulary, f)
+
     if args.infer is not None:
         print("start do_bpe()")
         do_bpe()
         print("finish do_bpe()")
-    '''
 
 if __name__ == '__main__':
     argv = sys.argv
